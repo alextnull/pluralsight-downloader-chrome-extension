@@ -6,13 +6,9 @@ let listenerInstance = undefined
 // mode, which implies that no more than one download is present, thus no need to
 // to check for the finished download ID
 var onChangeFactory =
-	(responseCb) =>
+	responseCb =>
 	({ state }) => {
-		if (
-			state &&
-			state.current === 'complete' &&
-			state.previous === 'in_progress'
-		) {
+		if (state && state.current === 'complete' && state.previous === 'in_progress') {
 			chrome.downloads.onChanged.removeListener(listenerInstance)
 			responseCb({ actionStatus: 'File downloaded successfully' })
 		}

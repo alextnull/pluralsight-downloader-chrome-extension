@@ -11,7 +11,6 @@ const EXTENSION = 'mp4'
 const EXTENSION_SUBS = 'vtt'
 
 const qualities = ['1280x720', '1024x768']
-const DEFAULT_QUALITY = qualities[0]
 
 const DOWNLOAD_TIMEOUT = 3000
 let DURATION_PERCENT = 10 // percent max 100
@@ -41,7 +40,7 @@ const sleep = (millis, throwOnAborted = false) => {
 	let timeout_id
 	let rejector
 	const prom = new Promise((resolve, reject) => {
-		rejector = throwOnAborted ? reject : (_) => resolve()
+		rejector = throwOnAborted ? reject : _ => resolve()
 
 		timeout_id = setTimeout(() => {
 			resolve()
@@ -54,13 +53,13 @@ const sleep = (millis, throwOnAborted = false) => {
 	return prom
 }
 
-const updateWaitStats = (timeStat) => {
+const updateWaitStats = timeStat => {
 	try {
 		return asyncInterval(writeTimeStat, timeStat)
 	} catch (e) {}
 }
 
-const writeTimeStat = (msStat) => {
+const writeTimeStat = msStat => {
 	let toSec = new Date(msStat).toISOString().slice(14, -5)
 	chrome.runtime.sendMessage({ Status: `Waiting... ${toSec}` })
 }
@@ -68,8 +67,8 @@ const writeTimeStat = (msStat) => {
 const asyncInterval = (callback, msClear, msInterval = 1000) => {
 	let rejector
 	let interval
-	const prom = new Promise((resolove, reject) => {
-		rejector = (_) => resolove()
+	const prom = new Promise(resolove => {
+		rejector = _ => resolove()
 		interval = setInterval(() => {
 			if (msClear > 0) callback(msClear)
 			else {
@@ -95,17 +94,13 @@ const downloadFile = (link, filePath) => {
 				link: link,
 				filePath: filePath,
 			},
-			(response) => resolve(response),
+			response => resolve(response),
 		)
 	})
 }
 
-const readSharedValue = async (name) =>
-	new Promise((resolve, _) =>
-		chrome.storage.sync.get(name, (data) =>
-			data == null ? resolve() : resolve(data[name]),
-		),
-	)
+const readSharedValue = async name =>
+	new Promise((resolve, _) => chrome.storage.sync.get(name, data => (data == null ? resolve() : resolve(data[name]))))
 
 const readSpeed = () => readSharedValue('speedPercent')
 
@@ -113,10 +108,21 @@ const readMaxDuration = () => readSharedValue('maxDuration')
 
 const readAddedCourses = () => readSharedValue('AddedCourses')
 
-const log = (message, type = 'STATUS') =>
-	console.log(`[${APPNAME}]:[${type}]: ${message}`)
+const readSecondaryLanguageCode = () => readSharedValue('secondaryLanguage')
 
-const replaceQuotesWithSquareBrackets = (name) => {
+const readIsLeadingZeroAlways = () => {
+	let isAlwaysLeadingZero = readSharedValue('isAlwaysLeadingZero')
+	if (isAlwaysLeadingZero === 'true') {
+		return true;
+	}
+	return false;
+}
+
+const readCourseType = () => readSharedValue('courseType')
+
+const log = (message, type = 'STATUS') => console.log(`[${APPNAME}]:[${type}]: ${message}`)
+
+const replaceQuotesWithSquareBrackets = name => {
 	let isFirstQuote = true
 	let newName = ''
 	for (let i = 0; i < name.length; i++) {
@@ -134,11 +140,26 @@ const replaceQuotesWithSquareBrackets = (name) => {
 	return newName
 }
 
-const removeInvalidCharacters = (name) =>
-	replaceQuotesWithSquareBrackets(name)
-		.replace(INVALID_CHARACTERS, '')
-		.replace(':', ' -')
-		.trim()
+const replaceColonsWithHyphen = name => {
+	let newName = name[0]
+	for (let i = 1; i < name.length - 1; i++) {
+		if (name[i - 1] !== ' ' && name[i] === ':' && name[i + 1] !== ' ') {
+			newName += '-'
+		}
+		else {
+			newName += name[i]
+		}
+	}
+	newName += name[name.length - 1]
+	newName = newName.replace(':', ' -')
+	return newName
+}
+
+const removeInvalidCharacters = name => {
+	let clearedName = replaceQuotesWithSquareBrackets(name);
+	clearedName = replaceColonsWithHyphen(clearedName).replace(INVALID_CHARACTERS, '').trim();
+	return clearedName
+}
 
 const getCurrentVideoId = () => {
 	const vIdMatch = location.search.match('clipId=?([0-9a-f-]*)')
@@ -148,6 +169,11 @@ const getCurrentVideoId = () => {
 // ====================================================================
 // END:UTILITIES
 // ====================================================================
+
+const getQuality = async () => {
+	const courseType = await readCourseType();
+	return courseType === "Old" ? qualities[1] : qualities[0];
+}
 
 const getDirectoryName = (sectionIndex, sectionName, bPadding = false) => {
 	let padIndex = `${sectionIndex + 1}`
@@ -165,8 +191,9 @@ const getFileName = (videoIndex, videoName, bPadding = false) => {
 	return removeInvalidCharacters(`${padIndex}${DELIMINATOR} ${videoName}`)
 }
 
-const getVideoURL = async (videoId) => {
+const getVideoURL = async videoId => {
 	try {
+		const quality = await getQuality();
 		const response = await fetch(viewclipURL, {
 			method: 'POST',
 			headers: {
@@ -175,7 +202,7 @@ const getVideoURL = async (videoId) => {
 			body: JSON.stringify({
 				clipId: videoId,
 				mediaType: EXTENSION,
-				quality: DEFAULT_QUALITY,
+				quality: quality,
 				online: true,
 				boundedContext: 'course',
 				versionId: '',
@@ -189,8 +216,8 @@ const getVideoURL = async (videoId) => {
 	}
 }
 
-const getSubtitleURL = async (videoId, versionId) => {
-	return subsURL + '/' + videoId + '/' + versionId + '/en/'
+const getSubtitleURL = async (videoId, versionId, languageCode = 'en') => {
+	return subsURL + '/' + videoId + '/' + versionId + '/' + languageCode + '/'
 }
 
 const getPlaylistPath = (courseName, authorName) => {
@@ -212,10 +239,7 @@ const getExercisePath = (courseName, authorName) => {
 const getCourseRootPath = (courseName, authorName) => {
 	try {
 		const rootDirectory = ROOT_DIRECTORY
-		const courseDirectory =
-			authorName !== undefined
-				? `${courseName} By ${authorName}`.trim()
-				: `${courseName}`.trim()
+		const courseDirectory = authorName !== undefined ? `${courseName} By ${authorName}`.trim() : `${courseName}`.trim()
 
 		return `${rootDirectory}\\${courseDirectory}`.replace(/(\r\n|\n|\r)/gm, '')
 	} catch (error) {
@@ -235,16 +259,7 @@ const getFilePath = (
 	forPlaylist = false,
 ) => {
 	try {
-		const rootDirectory = ROOT_DIRECTORY
-		const courseDirectory =
-			authorName !== undefined
-				? `${courseName} By ${authorName}`.trim()
-				: `${courseName}`.trim()
-		const sectionDirectory = getDirectoryName(
-			sectionIndex,
-			sectionName,
-			addPadding,
-		)
+		const sectionDirectory = getDirectoryName(sectionIndex, sectionName, addPadding)
 		const fileName = getFileName(videoIndex, videoName, addPadding)
 
 		let filePath = `${sectionDirectory}\\${fileName}.${extension}`
@@ -281,12 +296,8 @@ const printTimeStats = async (courseJSON, startingVideoId) => {
 	let stat = await getCourseStats(courseJSON, startingVideoId)
 
 	let friendlyTtl = new Date(stat.timeTotal * 1000).toISOString().substr(11, 8)
-	let friendlyTfn = new Date(stat.timeFromNow * 1000)
-		.toISOString()
-		.substr(11, 8)
-	let friendlyTfnDl = new Date(stat.timeDownloading * 1000)
-		.toISOString()
-		.substr(11, 8)
+	let friendlyTfn = new Date(stat.timeFromNow * 1000).toISOString().substr(11, 8)
+	let friendlyTfnDl = new Date(stat.timeDownloading * 1000).toISOString().substr(11, 8)
 
 	console.log(`Total course time: ${friendlyTtl}`)
 	console.log(`Time remaining: ${friendlyTfn}`)
@@ -299,17 +310,9 @@ const getCourseStats = async (courseJSON, startingVideoId) => {
 	let timeFromNow = 0
 	let timeTotal = 0
 	try {
-		const {
-			id: courseId,
-			title: courseName,
-			authors,
-			modules: sections,
-		} = courseJSON
+		const { authors, modules: sections } = courseJSON
 
-		let authorName =
-			authors[0].displayName != undefined
-				? authors[0].displayName
-				: authors[0].authorHandle
+		let authorName = authors[0].displayName != undefined ? authors[0].displayName : authors[0].authorHandle
 		if (authorName == undefined) authorName = 'noName'
 
 		// download all videos when no startid was given
@@ -318,11 +321,7 @@ const getCourseStats = async (courseJSON, startingVideoId) => {
 		video_to_download = []
 
 		for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-			const {
-				id: sectionId,
-				title: sectionName,
-				contentItems: sectionItems,
-			} = sections[sectionIndex]
+			const { contentItems: sectionItems } = sections[sectionIndex]
 
 			for (let videoIndex = 0; videoIndex < sectionItems.length; videoIndex++) {
 				if (!CONTINUE_DOWNLOAD) {
@@ -331,12 +330,7 @@ const getCourseStats = async (courseJSON, startingVideoId) => {
 					return
 				}
 
-				const {
-					id: videoId,
-					title: videoName,
-					version: versionId,
-					duration,
-				} = sectionItems[videoIndex]
+				const { id: videoId, duration } = sectionItems[videoIndex]
 
 				timeTotal += duration
 
@@ -372,38 +366,22 @@ const getCourseStats = async (courseJSON, startingVideoId) => {
 	return { timeFromNow, timeTotal, timeDownloading }
 }
 
-const downloadPlaylist = async (courseJSON) => {
+const downloadPlaylist = async courseJSON => {
 	try {
-		const {
-			id: courseId,
-			title: courseName,
-			authors,
-			modules: sections,
-		} = courseJSON
+		const { title: courseName, authors, modules: sections } = courseJSON
 
 		let playlistLines = []
 
-		let authorName =
-			authors[0].displayName != undefined
-				? authors[0].displayName
-				: authors[0].authorHandle
+		let authorName = authors[0].displayName != undefined ? authors[0].displayName : authors[0].authorHandle
 		if (authorName == undefined) authorName = 'noName'
 
 		for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-			const {
-				id: sectionId,
-				title: sectionName,
-				contentItems: sectionItems,
-			} = sections[sectionIndex]
+			const { title: sectionName, contentItems: sectionItems } = sections[sectionIndex]
 
 			for (let videoIndex = 0; videoIndex < sectionItems.length; videoIndex++) {
-				const {
-					id: videoId,
-					title: videoName,
-					version: versionId,
-					duration,
-				} = sectionItems[videoIndex]
+				const { title: videoName } = sectionItems[videoIndex]
 
+				const isLeadingZeroAlways = await readIsLeadingZeroAlways()
 				const filePath = getFilePath(
 					removeInvalidCharacters(courseName),
 					removeInvalidCharacters(authorName),
@@ -412,7 +390,7 @@ const downloadPlaylist = async (courseJSON) => {
 					videoIndex,
 					removeInvalidCharacters(videoName),
 					`${EXTENSION}`,
-					sectionItems.length > 9,
+					isLeadingZeroAlways || sectionItems.length > 9,
 					true,
 				)
 
@@ -421,10 +399,7 @@ const downloadPlaylist = async (courseJSON) => {
 		}
 
 		let playlistText = playlistLines.join('\n')
-		let playlistPath = getPlaylistPath(
-			removeInvalidCharacters(courseName),
-			removeInvalidCharacters(authorName),
-		)
+		let playlistPath = getPlaylistPath(removeInvalidCharacters(courseName), removeInvalidCharacters(authorName))
 
 		await downloadPlaylistText(playlistText, playlistPath)
 	} catch (error) {
@@ -457,26 +432,15 @@ function removeDownloadItem(item) {
 
 const downloadCourse = async (courseJSON, startingVideoId) => {
 	try {
-		const {
-			id: courseId,
-			title: courseName,
-			authors,
-			modules: sections,
-		} = courseJSON
+		const { title: courseName, authors, modules: sections } = courseJSON
 
-		let authorName =
-			authors[0].displayName != undefined
-				? authors[0].displayName
-				: authors[0].authorHandle
+		let authorName = authors[0].displayName != undefined ? authors[0].displayName : authors[0].authorHandle
 		if (authorName == undefined) authorName = 'noName'
 
 		// download all videos when no startid was given
 		let startToggle = startingVideoId == null || startingVideoId == ''
 
-		log(
-			`#################### "${courseName} By ${authorName}" ####################`,
-			'INFO',
-		)
+		log(`#################### "${courseName} By ${authorName}" ####################`, 'INFO')
 
 		// store the download failed file information to try again after done
 		let to_download_again = []
@@ -485,11 +449,7 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 		chrome.runtime.sendMessage({ CourseTitle: courseName })
 
 		for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-			const {
-				id: sectionId,
-				title: sectionName,
-				contentItems: sectionItems,
-			} = sections[sectionIndex]
+			const { title: sectionName, contentItems: sectionItems } = sections[sectionIndex]
 
 			log(`==================== "${sectionName}" ====================`, 'INFO')
 
@@ -499,12 +459,7 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 					return
 				}
 
-				const {
-					id: videoId,
-					title: videoName,
-					version: versionId,
-					duration,
-				} = sectionItems[videoIndex]
+				const { id: videoId, title: videoName, version: versionId, duration } = sectionItems[videoIndex]
 
 				if (!startToggle) {
 					if (videoId == startingVideoId) {
@@ -519,6 +474,7 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 
 				console.log(`Downloading [${videoId}] ${videoName}`)
 
+				const isLeadingZeroAlways = await readIsLeadingZeroAlways()
 				const filePath = getFilePath(
 					removeInvalidCharacters(courseName),
 					removeInvalidCharacters(authorName),
@@ -527,7 +483,7 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 					videoIndex,
 					removeInvalidCharacters(videoName),
 					`${EXTENSION}`,
-					sectionItems.length > 9,
+					isLeadingZeroAlways || sectionItems.length > 9,
 				)
 
 				const filePath_subs = getFilePath(
@@ -538,8 +494,11 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 					videoIndex,
 					removeInvalidCharacters(videoName),
 					`${EXTENSION_SUBS}`,
-					sectionItems.length > 9,
+					isLeadingZeroAlways || sectionItems.length > 9,
 				)
+
+				const extensionIndex = filePath_subs.lastIndexOf(`.${EXTENSION_SUBS}`)
+				const filePathNoExt_subs = filePath_subs.substring(0, extensionIndex)
 
 				log(`Downloading... "${videoName}"`, 'DOWNLOAD')
 				chrome.runtime.sendMessage({ Status: 'Downloading...' })
@@ -549,6 +508,18 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 					if (versionId) {
 						const subsURL = await getSubtitleURL(videoId, versionId)
 						await downloadSubs(subsURL, filePath_subs)
+						// Secondary language logic
+						const secondaryLangCode = await readSecondaryLanguageCode()
+						if (
+							secondaryLangCode !== null &&
+							secondaryLangCode !== undefined &&
+							secondaryLangCode !== '' &&
+							secondaryLangCode !== 'none'
+						) {
+							const langSubsUrl = await getSubtitleURL(videoId, versionId, secondaryLangCode)
+							const filePath_subsLang = `${filePathNoExt_subs}.${secondaryLangCode}.vtt`
+							await downloadSubs(langSubsUrl, filePath_subsLang)
+						}
 					}
 
 					//Index to descriminate subs or video
@@ -588,23 +559,15 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 				let maxDuration = await readMaxDuration()
 				// Sleep for minimum duration btw the time with percent and the max duration time
 				if (maxDuration != 0) {
-					CURRENT_INTERVAL = updateWaitStats(
-						Math.min(duration * 10 * speed, maxDuration * 1000),
-					)
-					CURRENT_SLEEP = sleep(
-						Math.min(duration * 10 * speed, maxDuration * 1000),
-					)
+					CURRENT_INTERVAL = updateWaitStats(Math.min(duration * 10 * speed, maxDuration * 1000))
+					CURRENT_SLEEP = sleep(Math.min(duration * 10 * speed, maxDuration * 1000))
 					await CURRENT_SLEEP
 					CURRENT_INTERVAL.abort()
 				}
 				// Sleep for duration based on a constant updated by speedPercent from extesion browser
 				else {
-					CURRENT_INTERVAL = updateWaitStats(
-						Math.max(duration * 10 * speed, DOWNLOAD_TIMEOUT),
-					)
-					CURRENT_SLEEP = sleep(
-						Math.max(duration * 10 * speed, DOWNLOAD_TIMEOUT),
-					)
+					CURRENT_INTERVAL = updateWaitStats(Math.max(duration * 10 * speed, DOWNLOAD_TIMEOUT))
+					CURRENT_SLEEP = sleep(Math.max(duration * 10 * speed, DOWNLOAD_TIMEOUT))
 					await CURRENT_SLEEP
 					CURRENT_INTERVAL.abort()
 				}
@@ -622,17 +585,27 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 			if (fileInfo.expId === 0) {
 				const subsURL = await getSubtitleURL(fileInfo.videoId, fileInfo.verId)
 				await downloadSubs(subsURL, fileInfo.filePath_subs)
+				// Secondary language logic
+				const extensionIndex = fileInfo.filePath_subs.lastIndexOf(`.${EXTENSION_SUBS}`)
+				const filePathNoExt_subs = fileInfo.filePath_subs.substring(0, extensionIndex)
+				const secondaryLangCode = await readSecondaryLanguageCode()
+				if (
+					secondaryLangCode !== null &&
+					secondaryLangCode != undefined &&
+					secondaryLangCode !== '' &&
+					secondaryLangCode !== 'none'
+				) {
+					const langSubsUrl = await getSubtitleURL(fileInfo.videoId, fileInfo.versionId, secondaryLangCode)
+					const filePath_subsLang = `${filePathNoExt_subs}.${secondaryLangCode}.vtt`
+					await downloadSubs(langSubsUrl, filePath_subsLang)
+				}
 			}
 			const videoURL = await getVideoURL(fileInfo.videoId)
 			downloadVideo(videoURL, fileInfo.filePath)
 
 			let speed = await readSpeed()
-			CURRENT_INTERVAL = updateWaitStats(
-				Math.max(fileInfo.duration * 10 * speed, DOWNLOAD_TIMEOUT),
-			)
-			CURRENT_SLEEP = sleep(
-				Math.max(fileInfo.duration * 10 * speed, DOWNLOAD_TIMEOUT),
-			)
+			CURRENT_INTERVAL = updateWaitStats(Math.max(fileInfo.duration * 10 * speed, DOWNLOAD_TIMEOUT))
+			CURRENT_SLEEP = sleep(Math.max(fileInfo.duration * 10 * speed, DOWNLOAD_TIMEOUT))
 			await CURRENT_SLEEP
 			CURRENT_INTERVAL.abort()
 		}
@@ -654,7 +627,7 @@ const downloadCourse = async (courseJSON, startingVideoId) => {
 	}
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener(message => {
 	if (typeof message !== 'object') {
 		return false
 	}
@@ -691,31 +664,18 @@ chrome.runtime.onMessage.addListener((message) => {
 	}
 })
 
-const downloadExerciseFiles = async (courseJSON) => {
+const downloadExerciseFiles = async courseJSON => {
 	try {
-		const {
-			id: courseId,
-			title: courseName,
-			authors,
-			modules: sections,
-		} = courseJSON
+		const { id: courseId, title: courseName, authors } = courseJSON
 
-		let authorName =
-			authors[0].displayName != undefined
-				? authors[0].displayName
-				: authors[0].authorHandle
+		let authorName = authors[0].displayName != undefined ? authors[0].displayName : authors[0].authorHandle
 		if (authorName == undefined) authorName = 'noName'
 
 		let exerciseLinkJson = await (
-			await fetch(
-				`https://app.pluralsight.com/learner/user/courses/${courseId}/exercise-files-url`,
-			)
+			await fetch(`https://app.pluralsight.com/learner/user/courses/${courseId}/exercise-files-url`)
 		).json()
 
-		let targetPath = getExercisePath(
-			removeInvalidCharacters(courseName),
-			removeInvalidCharacters(authorName),
-		)
+		let targetPath = getExercisePath(removeInvalidCharacters(courseName), removeInvalidCharacters(authorName))
 
 		await downloadFile(exerciseLinkJson.exerciseFilesUrl, targetPath)
 	} catch (error) {
@@ -727,7 +687,7 @@ let jsonCnt = 0
 
 // main-function
 $(() => {
-	$(document).keypress(async (e) => {
+	$(document).keypress(async e => {
 		console.log(`Keypress: ${e.which}`)
 
 		const cmdToggleEnabled = e.which === 101 || e.which === 69
@@ -741,9 +701,7 @@ $(() => {
 
 		if (cmdToggleEnabled) {
 			// Enable/Disabled extension bindings
-			!EXTENSION_ENABLED
-				? log('Enabled the extension bindings.')
-				: log('Disabled the extension bindings.')
+			!EXTENSION_ENABLED ? log('Enabled the extension bindings.') : log('Disabled the extension bindings.')
 			EXTENSION_ENABLED = !EXTENSION_ENABLED
 			return
 		}
@@ -767,30 +725,17 @@ $(() => {
 
 			return
 		}
-		if (
-			cmdExerciseFiles ||
-			cmdPlaylist ||
-			cmdDownloadAll ||
-			cmdDownloadFromNowOn ||
-			cmdTime ||
-			cmdAddCourse
-		) {
-			log(
-				'Downloading course ' +
-					(cmdDownloadAll ? 'from the beginning' : 'from now on') +
-					' ...',
-			)
+		if (cmdExerciseFiles || cmdPlaylist || cmdDownloadAll || cmdDownloadFromNowOn || cmdTime || cmdAddCourse) {
+			log('Downloading course ' + (cmdDownloadAll ? 'from the beginning' : 'from now on') + ' ...')
 			log('Fetching course information...')
 
-			const courseJSON = JSON.parse($(window.__NEXT_DATA__).text()).props
-				.pageProps.tableOfContents
+			const courseJSON = JSON.parse($(window.__NEXT_DATA__).text()).props.pageProps.tableOfContents
 
 			if (cmdAddCourse) {
 				log('Add Course')
 				let addedCourses = []
-				chrome.storage.local.get('addedCourses', (data) => {
-					if (data.addedCourses)
-						addedCourses.push.apply(addedCourses, data.addedCourses)
+				chrome.storage.local.get('addedCourses', data => {
+					if (data.addedCourses) addedCourses.push.apply(addedCourses, data.addedCourses)
 
 					courseJSON.startingVideoId = null
 					addedCourses.push(courseJSON)
@@ -802,11 +747,7 @@ $(() => {
 			}
 
 			if (cmdDownloadAll || cmdDownloadFromNowOn) {
-				log(
-					'Downloading course ' +
-						(cmdDownloadAll ? 'from the beginning' : 'from now on') +
-						' ...',
-				)
+				log('Downloading course ' + (cmdDownloadAll ? 'from the beginning' : 'from now on') + ' ...')
 				log('Fetching course information...')
 
 				CONTINUE_DOWNLOAD = true
@@ -823,7 +764,7 @@ $(() => {
 
 				while (true) {
 					let nextCourse = await new Promise((resolve, _) =>
-						chrome.storage.local.get('addedCourses', (data) => {
+						chrome.storage.local.get('addedCourses', data => {
 							if (!data) resolve()
 							else {
 								let courses = data['addedCourses']
